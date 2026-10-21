@@ -14,11 +14,14 @@ class InteractiveMixin:
     phone_number: str
     telegram_user_id: Optional[str]
     channels_to_listen_from: list[str]
+    _listening: bool
 
     _register_channel_listeners: Callable[[], None]
 
     async def disconnect_client(self) -> None:
         """Gracefully disconnects from Telegram."""
+        # Channels added while disconnected get their listener on the next start_*
+        self._listening = False
         if hasattr(self, "client") and self.client and self.client.is_connected():
             await self.client.disconnect()
             self.logger.info(f"Client '{self.telegram_user_id or 'unknown'}' disconnected from Telegram")

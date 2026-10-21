@@ -66,6 +66,8 @@ class VGTelegramManager(
         self._phone_code_hash: Optional[str] = None
         self._channel_callbacks: dict = {}
         self._global_callbacks: list = []
+        self._listeners: dict = {}
+        self._listening = False
 
 
 # Convenience aliases

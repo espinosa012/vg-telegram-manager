@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, AsyncGenerator, Optional
+from typing import TYPE_CHECKING, AsyncGenerator, Awaitable, Callable, Optional
 
 from vgtelegrammanager.models import TelegramDialog, TelegramDialogType
 
@@ -73,9 +73,10 @@ class DiscoveryMixin:
     client: TelegramClient
     logger: logging.Logger
 
-    # Required from AuthMixin & ValidationMixin
-    def _ensure_client_ready(self) -> None: ...
-    async def is_authenticated(self) -> bool: ...
+    # Provided by AuthMixin & ValidationMixin. Declared as annotations only: defining
+    # stub methods here would shadow the real implementations in the MRO.
+    _ensure_client_ready: Callable[[], None]
+    is_authenticated: Callable[[], Awaitable[bool]]
 
     async def _resolve_channel_identifier(self, channel: str) -> str:
         """

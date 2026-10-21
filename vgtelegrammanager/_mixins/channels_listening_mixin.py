@@ -14,6 +14,8 @@ class ChannelsListeningMixin:
     logger: logging.Logger
     telegram_user_id: Optional[str]
     channels_to_listen_from: list[str]
+    _channel_callbacks: dict[str, list[MessageHandler]]
+    _listening: bool
 
     # Provided by DiscoveryMixin & AuthMixin
     _resolve_channel_identifier: Callable[..., Awaitable[str]]
@@ -21,6 +23,8 @@ class ChannelsListeningMixin:
     is_authenticated: Callable[[], Awaitable[bool]]
     _set_telegram_user_id: Callable[[], Awaitable[None]]
     _register_channel_listeners: Callable[[], None]
+    _add_listener: Callable[[str], None]
+    _remove_listener: Callable[[str], None]
     add_message_handler: Callable[[MessageHandler, Optional[str]], None]
 
     async def start_listening_channels(self) -> None:
@@ -68,6 +72,8 @@ class ChannelsListeningMixin:
         if resolved not in self.channels_to_listen_from:
             self.channels_to_listen_from.append(resolved)
             self.logger.info(f"Added channel to monitor: '{resolved}'")
+            if self._listening:
+                self._add_listener(resolved)
             return True
         else:
             self.logger.warning(f"Channel '{resolved}' is already being monitored")
@@ -75,23 +81,24 @@ class ChannelsListeningMixin:
 
     def remove_channel_to_listen(self, channel_identifier: str) -> bool:
         """
-        Removes a channel from the listening list.
+        Removes a channel from the listening list, detaching its Telethon listener
+        and dropping its channel-specific callbacks.
 
         Args:
             channel_identifier: Channel identifier as returned/stored by add_channel_to_listen.
         """
         target = channel_identifier.strip()
-        if target in self.channels_to_listen_from:
-            self.channels_to_listen_from.remove(target)
-            self.logger.info(f"Removed channel '{target}' from monitor list")
-            return True
-
         # Check alternative with or without @
         alt = target.lstrip("@") if target.startswith("@") else f"@{target}"
-        if alt in self.channels_to_listen_from:
-            self.channels_to_listen_from.remove(alt)
-            self.logger.info(f"Removed channel '{alt}' from monitor list")
-            return True
+
+        for candidate in (target, alt):
+            if candidate in self.channels_to_listen_from:
+                self.channels_to_listen_from.remove(candidate)
+                self._remove_listener(candidate)
+                self._channel_callbacks.pop(candidate, None)
+                self._channel_callbacks.pop(candidate.lstrip("@"), None)
+                self.logger.info(f"Removed channel '{candidate}' from monitor list")
+                return True
 
         return False
 
