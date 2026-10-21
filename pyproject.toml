@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vg-telegram-manager"
+version = "0.1.0"
+description = "A versatile Telegram user-client manager to monitor channels, handle incoming messages, and forward events."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    {name = "espinosa012"}
+]
+keywords = ["telegram", "telethon", "client", "userbot", "monitoring", "webhook"]
+license = {text = "MIT"}
+
+dependencies = [
+    "pydantic>=2.0.0",
+    "requests>=2.31.0",
+    "telethon>=1.34.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "python-dotenv>=1.0.0",
+    "black>=22.0.0",
+    "flake8>=4.0.0",
+    "mypy>=1.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["vgtelegrammanager", "vgtelegrammanager.*"]
+
+[tool.black]
+line-length = 100
+target-version = ['py310', 'py311', 'py312', 'py313']
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
