@@ -31,8 +31,10 @@ Or for development:
 ```bash
 git clone https://github.com/espinosa012/vg-telegram-manager.git
 cd vg-telegram-manager
-pip install -e ".[dev]"
+pip install -e ".[dev]"   # or: uv sync --extra dev
 ```
+
+Run the checks with `ruff check .`, `mypy` and `pytest`.
 
 ---
 
@@ -89,6 +91,7 @@ asyncio.run(authenticate())
 ```
 
 > **Note:** Once authenticated, the session file stores the credentials. Subsequent runs do not require code verification.
+> The session file grants full access to the account: it is created with owner-only permissions (`0600`, directory `0700`). Never commit or share it.
 
 #### Interactive Flow (CLI Scripts)
 
@@ -154,7 +157,9 @@ asyncio.run(main())
 
 ### Forwarding to an HTTP Endpoint (Webhook)
 
-If you pass `process_messages_endpoint`, all incoming messages are automatically POSTed to that URL in a background thread:
+If you pass `process_messages_endpoint`, all incoming messages are automatically POSTed to that URL as JSON. Connections are reused between messages, and timeouts, connection errors and transient statuses (408, 425, 429, 5xx) are retried up to 3 times with exponential backoff (tune with the `webhook_max_attempts`, `webhook_backoff_seconds` and `webhook_timeout` attributes). Any 2xx response counts as delivered.
+
+Use HTTPS: a plain `http://` endpoint outside localhost logs a warning, because message contents would travel unencrypted.
 
 ```python
 client = VGTelegramManager(
@@ -163,6 +168,7 @@ client = VGTelegramManager(
     phone_number="+34600000000",
     session_file_path="sessions/user.session",
     process_messages_endpoint="https://my-backend.example.com/api/telegram-webhook",
+    webhook_secret="a-long-random-shared-secret",  # optional, signs every request
 )
 ```
 
@@ -179,6 +185,21 @@ The payload sent to your endpoint matches `TelegramMessage`:
 }
 ```
 
+`timestamp` is the date the message was sent on Telegram.
+
+#### Verifying webhook signatures
+
+With `webhook_secret` set, each request carries an `X-VGTM-Timestamp` header and an `X-VGTM-Signature: sha256=<hex>` header, the HMAC-SHA256 of `"<timestamp>.<raw body>"`. Verify it on the receiving side against the **raw** body before trusting the payload:
+
+```python
+from vgtelegrammanager import verify_webhook_signature
+
+if not verify_webhook_signature(
+    secret, raw_body, headers["X-VGTM-Timestamp"], headers["X-VGTM-Signature"]
+):
+    return 401  # reject: forged, tampered with, or older than 5 minutes
+```
+
 ---
 
 ## Dialog & Message Discovery
@@ -191,7 +212,7 @@ from vgtelegrammanager import TelegramDialogType
 # Filter by entity types (CHANNEL, USER, CHAT)
 dialogs = await client.get_user_dialogs([TelegramDialogType.CHANNEL])
 for d in dialogs:
-    print(f"{d.name} (@{d.username}) - {d.kind}")
+    print(f"{d.name} (@{d.username}) - {d.kind.value}")  # kind is a TelegramDialogKind
 ```
 
 ### Retrieve Message History
@@ -217,6 +238,7 @@ for msg in messages:
 | `session_file_path` | `str` | *required* | Path to Telethon `.session` file. |
 | `process_messages_endpoint` | `Optional[str]` | `None` | HTTP(S) URL to POST messages to. |
 | `logger` | `Optional[logging.Logger]` | `None` | Custom logger (defaults to standard library logger). |
+| `webhook_secret` | `Optional[str]` | `None` | Shared secret to HMAC-sign webhook requests. Requires `process_messages_endpoint`. |
 
 ### Key Methods
 
@@ -227,8 +249,8 @@ for msg in messages:
 - **`verify_code(code, password=None, phone_code_hash=None)`**: Submits verification code. Raises `SessionPasswordNeededError` if 2FA is enabled and no `password` is given.
 - **`verify_password(password)`**: Completes login for accounts with two-step verification.
 - **`is_authenticated()`**: Checks authorization status.
-- **`add_channel_to_listen(channel, callback=None)`**: Subscribes to channel or `'me'`.
-- **`remove_channel_to_listen(channel)`**: Unsubscribes from channel, detaching its listener and channel-specific callbacks.
+- **`add_channel_to_listen(channel, callback=None)`**: Subscribes to a channel: `'@username'`, `'me'`, a numeric peer ID, or a dialog display name (private chats without username resolve to their peer ID). Can be called while already listening.
+- **`remove_channel_to_listen(channel)`**: Unsubscribes from channel, detaching its listener and channel-specific callbacks. A leading `@` and letter case are ignored.
 - **`add_message_handler(handler, channel=None)`**: Registers sync/async callback.
 - **`start_listening_channels()`**: Starts listening loop (blocking).
 - **`get_user_dialogs(entity_types=None)`**: Lists user chats.

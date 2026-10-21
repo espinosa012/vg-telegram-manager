@@ -21,4 +21,6 @@ def connected_manager(tmp_path):
     client.sign_in = AsyncMock()
     client.send_code_request = AsyncMock()
     mgr.client = client
+    # Never hit the network from tests: webhook calls go through this mock session
+    mgr._http_session = MagicMock()
     return mgr

@@ -1,5 +1,6 @@
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+
 from vgtelegrammanager import VGTelegramManager
 from vgtelegrammanager.models import TelegramMessage
 
@@ -16,19 +17,16 @@ def manager(tmp_path):
     return mgr
 
 
-@pytest.mark.asyncio
 async def test_resolve_channel_me(manager):
     assert await manager._resolve_channel_identifier("me") == "me"
     assert await manager._resolve_channel_identifier("self") == "me"
     assert await manager._resolve_channel_identifier("  ME  ") == "me"
 
 
-@pytest.mark.asyncio
 async def test_resolve_channel_username(manager):
     assert await manager._resolve_channel_identifier("@some_channel") == "@some_channel"
 
 
-@pytest.mark.asyncio
 async def test_add_and_remove_channel(manager):
     added = await manager.add_channel_to_listen("@news")
     assert added is True
@@ -43,7 +41,6 @@ async def test_add_and_remove_channel(manager):
     assert "@news" not in manager.get_listening_channels()
 
 
-@pytest.mark.asyncio
 async def test_message_dispatch_to_callbacks(manager):
     received_global = []
     received_channel = []

@@ -39,7 +39,7 @@ async def test_remove_channel_detaches_listener_and_callbacks(connected_manager)
 
     connected_manager.client.remove_event_handler.assert_called_once_with(handler)
     assert "@news" not in connected_manager._listeners
-    assert "@news" not in connected_manager._channel_callbacks
+    assert "news" not in connected_manager._channel_callbacks
 
     await connected_manager._dispatch_message(
         "@news", TelegramMessage(telegram_message_id="1", content="x")

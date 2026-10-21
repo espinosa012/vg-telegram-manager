@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, AsyncGenerator, Awaitable, Callable, Optional
+from typing import TYPE_CHECKING, AsyncGenerator, Optional
 
-from vgtelegrammanager.models import TelegramDialog, TelegramDialogType
+from vgtelegrammanager._utils import ChannelIdentifier
+from vgtelegrammanager.models import TelegramDialog, TelegramDialogKind, TelegramDialogType
 
 if TYPE_CHECKING:
     from telethon import TelegramClient
     from telethon.tl.custom.dialog import Dialog
+    from telethon.tl.custom.message import Message
 
 
 def telegram_dialog_from_telethon(dialog: Dialog) -> TelegramDialog:
@@ -21,17 +23,17 @@ def telegram_dialog_from_telethon(dialog: Dialog) -> TelegramDialog:
     if entity_type == "Channel":
         dialog_type = TelegramDialogType.CHANNEL
         if getattr(entity, "gigagroup", False):
-            kind = "gigagroup"
+            kind = TelegramDialogKind.GIGAGROUP
         elif getattr(entity, "megagroup", False):
-            kind = "supergroup"
+            kind = TelegramDialogKind.SUPERGROUP
         else:
-            kind = "channel"
+            kind = TelegramDialogKind.CHANNEL
     elif entity_type == "User":
         dialog_type = TelegramDialogType.USER
-        kind = "bot" if getattr(entity, "bot", False) else "user"
+        kind = TelegramDialogKind.BOT if getattr(entity, "bot", False) else TelegramDialogKind.USER
     else:
         dialog_type = TelegramDialogType.CHAT
-        kind = "group"
+        kind = TelegramDialogKind.GROUP
 
     username = getattr(entity, "username", None)
     raw_extra = getattr(entity, "usernames", None) or []
@@ -68,55 +70,89 @@ def telegram_dialog_from_telethon(dialog: Dialog) -> TelegramDialog:
     )
 
 
+def _requested_type_names(entity_types: Optional[list[TelegramDialogType]]) -> set[str]:
+    if entity_types is None:
+        entity_types = list(TelegramDialogType)
+    if not isinstance(entity_types, list):
+        raise ValueError("'entity_types' must be a list of TelegramDialogType values")
+    return {ct.value for ct in entity_types}
+
+
 class DiscoveryMixin:
     """Mixin for Telegram channels and dialogs discovery."""
     client: TelegramClient
     logger: logging.Logger
 
-    # Provided by AuthMixin & ValidationMixin. Declared as annotations only: defining
-    # stub methods here would shadow the real implementations in the MRO.
-    _ensure_client_ready: Callable[[], None]
-    is_authenticated: Callable[[], Awaitable[bool]]
+    if TYPE_CHECKING:
+        # Provided by AuthMixin.
+        # Only declared for type checkers: a runtime stub would shadow the real
+        # implementation in the MRO.
+        async def _ensure_authenticated(self, action: str) -> None: ...
 
-    async def _resolve_channel_identifier(self, channel: str) -> str:
+    async def _resolve_channel_identifier(self, channel: str) -> ChannelIdentifier:
         """
         Resolves channel identifier into a Telethon-usable target.
 
         Accepts:
           - 'me' or 'self' -> returns 'me' (Saved Messages).
           - '@username' -> returned as-is.
-          - 'username' -> returned as-is.
-          - Display name -> searched via get_dialog_username_by_name().
+          - Numeric peer ID (e.g. '-1001234567890') -> returned as int.
+          - Display name -> '@username' of the matching dialog, or its peer ID if it
+            has no username (private chats and channels).
+          - Anything else -> returned as-is (treated as a username by Telethon).
         """
         stripped = channel.strip()
         if stripped.lower() in ("me", "self"):
             return "me"
         if stripped.startswith("@"):
             return stripped
+        if stripped.lstrip("-").isdigit():
+            return int(stripped)
 
         try:
-            username = await self.get_dialog_username_by_name(stripped)
-            return f"@{username}" if username else stripped
+            dialog = await self._find_dialog_by_name(stripped)
         except LookupError:
             return stripped
+        except RuntimeError as e:
+            self.logger.warning(
+                "Cannot look up '%s' by display name (%s); treating it as a username", stripped, e
+            )
+            return stripped
 
-    async def iter_messages_from_dialog(self, chat: str) -> AsyncGenerator:
+        username = telegram_dialog_from_telethon(dialog).username
+        # dialog.id is the marked peer ID (e.g. -100... for channels) that Telethon expects
+        return f"@{username}" if username else dialog.id
+
+    async def _find_dialog_by_name(
+        self,
+        name: str,
+        entity_types: Optional[list[TelegramDialogType]] = None,
+    ) -> Dialog:
+        """Returns the first dialog whose display name matches exactly, without listing the rest."""
+        requested_types = _requested_type_names(entity_types)
+        await self._ensure_authenticated("search dialogs")
+
+        async for dialog in self.client.iter_dialogs():
+            if dialog.name == name and type(dialog.entity).__name__ in requested_types:
+                return dialog
+
+        raise LookupError(f"No dialog found with name '{name}'")
+
+    async def iter_messages_from_dialog(self, chat: str) -> AsyncGenerator[Message, None]:
         """
         Async generator yielding messages from `chat`, newest first.
         """
         if not chat or not isinstance(chat, str):
             raise ValueError("'chat' must be a non-empty string")
 
-        self._ensure_client_ready()
-        if not await self.is_authenticated():
-            raise RuntimeError("Cannot iterate messages: client not authenticated")
+        await self._ensure_authenticated("iterate messages")
 
         resolved = await self._resolve_channel_identifier(chat)
-        self.logger.info(f"Iterating messages from '{resolved}'")
+        self.logger.info("Iterating messages from '%s'", resolved)
         async for msg in self.client.iter_messages(resolved):
             yield msg
 
-    async def get_messages_from_dialog(self, chat: str, n: int) -> list:
+    async def get_messages_from_dialog(self, chat: str, n: int) -> list[Message]:
         """
         Retrieves the last n messages from a dialog.
         """
@@ -125,13 +161,11 @@ class DiscoveryMixin:
         if not isinstance(n, int) or n <= 0:
             raise ValueError("'n' must be a positive integer")
 
-        self._ensure_client_ready()
-        if not await self.is_authenticated():
-            raise RuntimeError("Cannot get messages: client not authenticated")
+        await self._ensure_authenticated("get messages")
 
         resolved = await self._resolve_channel_identifier(chat)
         messages = await self.client.get_messages(resolved, limit=n)
-        self.logger.info(f"Retrieved {len(messages)} message(s) from '{resolved}'")
+        self.logger.info("Retrieved %d message(s) from '%s'", len(messages), resolved)
         return list(messages)
 
     async def get_dialog_username_by_name(
@@ -140,19 +174,19 @@ class DiscoveryMixin:
         entity_types: Optional[list[TelegramDialogType]] = None,
     ) -> Optional[str]:
         """
-        Finds a dialog by exact display name and returns its @username.
+        Finds a dialog by exact display name and returns its username (without '@'),
+        or None if the dialog has no public username.
+
+        Raises:
+            LookupError: If no dialog matches.
         """
         if not channel_name or not isinstance(channel_name, str):
             raise ValueError("'channel_name' must be a non-empty string")
 
-        types = entity_types if entity_types is not None else list(TelegramDialogType)
-        dialogs = await self.get_user_dialogs(types)
-        for dialog in dialogs:
-            if dialog.name == channel_name:
-                self.logger.info(f"Dialog '{channel_name}' found with username: {dialog.username}")
-                return dialog.username
-
-        raise LookupError(f"No dialog found with name '{channel_name}'")
+        dialog = await self._find_dialog_by_name(channel_name, entity_types)
+        username = telegram_dialog_from_telethon(dialog).username
+        self.logger.info("Dialog '%s' found with username: %s", channel_name, username)
+        return username
 
     async def get_user_dialogs(
         self,
@@ -161,23 +195,13 @@ class DiscoveryMixin:
         """
         Returns the user's dialogs filtered by entity type.
         """
-        if entity_types is None:
-            entity_types = list(TelegramDialogType)
-        if not isinstance(entity_types, list):
-            raise ValueError("'entity_types' must be a list of TelegramDialogType values")
+        requested_types = _requested_type_names(entity_types)
+        await self._ensure_authenticated("get dialogs")
 
-        self._ensure_client_ready()
-        if not await self.is_authenticated():
-            raise RuntimeError("Cannot get dialogs: client not authenticated")
-
-        requested_types = {ct.value for ct in entity_types}
         dialogs: list[TelegramDialog] = []
-
         async for dialog in self.client.iter_dialogs():
-            entity_type = type(dialog.entity).__name__
-            if entity_type not in requested_types:
-                continue
-            dialogs.append(telegram_dialog_from_telethon(dialog))
+            if type(dialog.entity).__name__ in requested_types:
+                dialogs.append(telegram_dialog_from_telethon(dialog))
 
-        self.logger.info(f"Found {len(dialogs)} dialog(s) for types {[ct.value for ct in entity_types]}")
+        self.logger.info("Found %d dialog(s) for types %s", len(dialogs), sorted(requested_types))
         return dialogs
