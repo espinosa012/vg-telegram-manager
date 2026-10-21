@@ -50,6 +50,9 @@ Go to [https://my.telegram.org/apps](https://my.telegram.org/apps), create an ap
 
 ```python
 import asyncio
+from getpass import getpass
+
+from telethon.errors import SessionPasswordNeededError
 from vgtelegrammanager import VGTelegramManager
 
 API_ID = 12345678
@@ -73,7 +76,11 @@ async def authenticate():
         
         # In a web app, receive this code from user input/form
         code = input("Enter verification code: ")
-        await client.verify_code(code)
+        try:
+            await client.verify_code(code)
+        except SessionPasswordNeededError:
+            # Account has two-step verification enabled
+            await client.verify_password(getpass("Enter 2FA password: "))
 
     print("Authenticated successfully!")
     await client.disconnect_client()
@@ -215,12 +222,13 @@ for msg in messages:
 
 - **`connect_client()`**: Connects to Telegram MTProto servers.
 - **`disconnect_client()`**: Disconnects gracefully.
-- **`request_verification_code(force_sms=False)`**: Requests verification code via app or SMS.
-- **`resend_verification_code_via_sms()`**: Requests SMS fallback.
-- **`verify_code(code)`**: Submits verification code.
+- **`request_verification_code(force_sms=False)`**: Requests verification code via app or SMS. Returns the `phone_code_hash` (persist it if verification happens in another process).
+- **`resend_verification_code_via_sms(phone_code_hash=None)`**: Requests SMS fallback. Returns the updated `phone_code_hash`.
+- **`verify_code(code, password=None, phone_code_hash=None)`**: Submits verification code. Raises `SessionPasswordNeededError` if 2FA is enabled and no `password` is given.
+- **`verify_password(password)`**: Completes login for accounts with two-step verification.
 - **`is_authenticated()`**: Checks authorization status.
 - **`add_channel_to_listen(channel, callback=None)`**: Subscribes to channel or `'me'`.
-- **`remove_channel_to_listen(channel)`**: Unsubscribes from channel.
+- **`remove_channel_to_listen(channel)`**: Unsubscribes from channel, detaching its listener and channel-specific callbacks.
 - **`add_message_handler(handler, channel=None)`**: Registers sync/async callback.
 - **`start_listening_channels()`**: Starts listening loop (blocking).
 - **`get_user_dialogs(entity_types=None)`**: Lists user chats.
