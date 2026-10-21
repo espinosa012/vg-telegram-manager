@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import TYPE_CHECKING, Optional
 
 from telethon.errors import SessionPasswordNeededError
 from telethon.tl.functions.auth import ResendCodeRequest
+
+from vgtelegrammanager._utils import mask_phone
 
 if TYPE_CHECKING:
     from telethon import TelegramClient
@@ -18,9 +20,11 @@ class AuthMixin:
     telegram_user_id: Optional[str]
     _phone_code_hash: Optional[str]
 
-    # Provided by ValidationMixin. Declared as an annotation only: a stub method here
-    # would shadow the real implementation in the MRO.
-    _ensure_client_ready: Callable[[], None]
+    if TYPE_CHECKING:
+        # Provided by ValidationMixin.
+        # Only declared for type checkers: a runtime stub would shadow the real
+        # implementation in the MRO.
+        def _ensure_client_ready(self) -> None: ...
 
     async def connect_client(self) -> None:
         """Connects the underlying Telethon client."""
@@ -50,7 +54,7 @@ class AuthMixin:
         sent = await self.client.send_code_request(self.phone_number, force_sms=force_sms)
         self._phone_code_hash = sent.phone_code_hash
         method = "SMS" if force_sms else "Telegram app"
-        self.logger.info(f"Verification code sent to {self.phone_number} via {method}")
+        self.logger.info("Verification code sent to %s via %s", mask_phone(self.phone_number), method)
         return self._phone_code_hash
 
     async def resend_verification_code_via_sms(
@@ -79,7 +83,7 @@ class AuthMixin:
             phone_code_hash=current_hash
         ))
         self._phone_code_hash = sent.phone_code_hash
-        self.logger.info(f"Verification code resent to {self.phone_number} via SMS")
+        self.logger.info("Verification code resent to %s via SMS", mask_phone(self.phone_number))
         return self._phone_code_hash
 
     async def verify_code(
@@ -122,7 +126,7 @@ class AuthMixin:
             await self.verify_password(password)
             return
         except Exception as e:
-            self.logger.error(f"Authentication failed: {e}")
+            self.logger.error("Authentication failed: %s", e)
             raise
 
         self._phone_code_hash = None
@@ -137,7 +141,7 @@ class AuthMixin:
         try:
             await self.client.sign_in(password=password)
         except Exception as e:
-            self.logger.error(f"Two-step verification failed: {e}")
+            self.logger.error("Two-step verification failed: %s", e)
             raise
 
         self._phone_code_hash = None
@@ -148,17 +152,20 @@ class AuthMixin:
         self._ensure_client_ready()
         return await self.client.is_user_authorized()
 
+    async def _ensure_authenticated(self, action: str) -> None:
+        """Raises unless the client is connected and authorized. `action` names the caller."""
+        self._ensure_client_ready()
+        if not await self.is_authenticated():
+            raise RuntimeError(f"Cannot {action}: client not authenticated")
+
     async def _set_telegram_user_id(self) -> None:
         """Retrieves and stores the authenticated user's ID."""
-        self._ensure_client_ready()
-
-        if not await self.is_authenticated():
-            raise RuntimeError("Cannot get user ID: client not authenticated")
+        await self._ensure_authenticated("get user ID")
 
         if self.telegram_user_id:
-            self.logger.debug(f"User ID already set: {self.telegram_user_id}")
+            self.logger.debug("User ID already set: %s", self.telegram_user_id)
             return
 
         me = await self.client.get_me()
         self.telegram_user_id = str(me.id)
-        self.logger.info(f"User ID set: {self.telegram_user_id}")
+        self.logger.info("User ID set: %s", self.telegram_user_id)

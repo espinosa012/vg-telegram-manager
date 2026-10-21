@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional
+
 from pydantic import BaseModel, Field
 
 
@@ -13,14 +14,25 @@ class TelegramDialogType(str, Enum):
     CHAT = "Chat"
 
 
+class TelegramDialogKind(str, Enum):
+    """Finer-grained kind of a dialog. Compares equal to its plain string value."""
+    CHANNEL = "channel"
+    SUPERGROUP = "supergroup"
+    GIGAGROUP = "gigagroup"
+    GROUP = "group"
+    USER = "user"
+    BOT = "bot"
+
+
 class TelegramDialog(BaseModel):
     """Represents a simplified Telegram dialog (channel, group, or user)."""
     id: int
     name: str
     username: Optional[str] = None
-    access_hash: Optional[int] = None
+    # Lets anyone holding it address the entity; kept out of repr() so it does not end up in logs.
+    access_hash: Optional[int] = Field(default=None, repr=False)
     dialog_type: TelegramDialogType
-    kind: str  # 'channel', 'supergroup', 'gigagroup', 'group', 'user', 'bot'
+    kind: TelegramDialogKind
     extra_usernames: list[str] = Field(default_factory=list)
 
     # Channel / Group specific metadata
@@ -34,7 +46,8 @@ class TelegramDialog(BaseModel):
     # User specific metadata
     first_name: Optional[str] = None
     last_name: Optional[str] = None
-    phone: Optional[str] = None
+    # Personal data of a third party; kept out of repr() so it does not end up in logs.
+    phone: Optional[str] = Field(default=None, repr=False)
     is_bot: Optional[bool] = None
     is_self: Optional[bool] = None
     premium: Optional[bool] = None
